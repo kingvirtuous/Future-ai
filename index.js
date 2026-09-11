@@ -1,0 +1,837 @@
+
+        // ============ CONFIG ============
+        // GEMINI API CONFIGURATION
+        let API_KEY = localStorage.getItem('geminiApiKey') || '';
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=";
+        const SILENCE_DELAY = 2000;
+        const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB max
+        let uploadedImage = null;
+
+        // ============ SYSTEM PROMPT ============
+        const SYSTEM_PROMPT = {
+            role: 'system',
+            content: `You are a helpful AI assistant. Your name is Future.
+
+            RULES:
+            1. NEVER introduce yourself as "Future" unless directly asked. Just respond naturally.
+            2. Be direct, concise, and helpful - like a normal AI assistant.
+            3. Don't use excessive emojis or overly enthusiastic language.
+            4. Answer questions directly without unnecessary greetings.
+            5. Keep responses professional and to the point.
+            6. When analyzing images, provide the final list directly WITHOUT showing step-by-step reasoning.`
+        };
+
+        // ============ STATE ============
+        let currentChatId = null;
+        let allChats = {};
+        let messages = [];
+        let isProcessing = false;
+        let isListening = false;
+        let recognition = null;
+        let isOverlayOpen = false;
+        let overlayFinalText = '';
+        let silenceTimer = null;
+        let hasIntroduced = false;
+
+        // ============ DOM REFS ============
+        const chatContainer = document.getElementById('chatContainer');
+        const chatDiv = document.getElementById('chat');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const overlay = document.getElementById('overlay');
+        const overlayTextBox = document.getElementById('overlayTextBox');
+        const overlayConversationEl = document.getElementById('overlayConversation');
+        const placeholderText = document.getElementById('placeholderText');
+        const overlayStatus = document.getElementById('overlayStatus');
+        const overlaySpeakBtn = document.getElementById('overlaySpeakBtn');
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+        const imagePreview = document.getElementById('imagePreview');
+        const imageFileName = document.getElementById('imageFileName');
+        const imageFileSize = document.getElementById('imageFileSize');
+
+        // ============ SIDEBAR ============
+        function toggleSidebar() { document.getElementById('chatSidebar').classList.toggle('open'); }
+        function closeSidebar() { document.getElementById('chatSidebar').classList.remove('open'); }
+
+        // ============ CHAT MANAGEMENT ============
+        function loadAllChats() {
+            const saved = localStorage.getItem('futureAllChats');
+            if (saved) { try { allChats = JSON.parse(saved); } catch(e) { allChats = {}; } }
+            if (Object.keys(allChats).length === 0) { createNewChat(); }
+            else {
+                const chatIds = Object.keys(allChats).sort((a, b) => new Date(allChats[b].updated) - new Date(allChats[a].updated));
+                currentChatId = chatIds[0];
+                messages = allChats[currentChatId].messages;
+                renderMessages();
+                renderChatList();
+            }
+        }
+
+        function saveAllChats() { localStorage.setItem('futureAllChats', JSON.stringify(allChats)); renderChatList(); }
+
+        function createNewChat() {
+            const id = 'chat_' + Date.now();
+            allChats[id] = { id, title: 'New Chat', messages: [], created: new Date().toISOString(), updated: new Date().toISOString() };
+            currentChatId = id;
+            messages = allChats[id].messages;
+            hasIntroduced = false;
+            renderMessages();
+            saveAllChats();
+            closeSidebar();
+            updateStatus('New chat created', '');
+            document.getElementById('userInput').focus();
+        }
+
+        function switchChat(chatId) {
+            if (chatId === currentChatId) return;
+            currentChatId = chatId;
+            messages = allChats[chatId].messages;
+            hasIntroduced = messages.some(m => m.role === 'assistant');
+            renderMessages();
+            renderChatList();
+            closeSidebar();
+        }
+
+        function deleteChat(chatId, e) {
+            e.stopPropagation();
+            if (Object.keys(allChats).length <= 1) { alert('You need at least one chat.'); return; }
+            if (confirm('Delete this chat?')) {
+                delete allChats[chatId];
+                if (currentChatId === chatId) {
+                    const chatIds = Object.keys(allChats);
+                    currentChatId = chatIds[0];
+                    messages = allChats[currentChatId].messages;
+                    hasIntroduced = messages.some(m => m.role === 'assistant');
+                }
+                renderMessages();
+                saveAllChats();
+            }
+        }
+
+        function renderChatList() {
+            const list = document.getElementById('chatList');
+            const chatIds = Object.keys(allChats).sort((a, b) => new Date(allChats[b].updated) - new Date(allChats[a].updated));
+            list.innerHTML = chatIds.map(id => {
+                const chat = allChats[id];
+                const isActive = id === currentChatId;
+                const title = chat.title || 'New Chat';
+                const time = new Date(chat.updated).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+                return `<div class="chat-list-item ${isActive ? 'active' : ''}" onclick="switchChat('${id}')">
+                    <span class="chat-title">${title}</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="chat-time">${time}</span>
+                        <button class="delete-chat" onclick="deleteChat('${id}', event)"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function scrollToBottom() { setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight; }, 50); }
+
+        // ============ API KEY FUNCTIONS ============
+        function setAPIKey() {
+            const input = document.getElementById('apiKeyInput');
+            const key = input.value.trim();
+            if (key.length > 10) {
+                API_KEY = key;
+                localStorage.setItem('geminiApiKey', key);
+                document.getElementById('apiSetup').classList.add('hidden');
+                updateStatus('✅ Gemini API key saved!', 'green');
+                if (messages.length === 0) {
+                    addMessage('assistant', '👋 Hello! I\'m Future. Your AI guide is ready!');
+                    hasIntroduced = true;
+                }
+            } else {
+                alert('❌ Please enter a valid Gemini API key');
+            }
+        }
+
+        function changeAPIKey() {
+            if (confirm('Change API Key? This will show the API setup screen.')) {
+                document.getElementById('apiSetup').classList.remove('hidden');
+                document.getElementById('apiKeyInput').value = '';
+                document.getElementById('apiKeyInput').focus();
+                updateStatus('🔑 Enter new API key', 'orange');
+            }
+        }
+
+        if (API_KEY) {
+            document.getElementById('apiSetup').classList.add('hidden');
+        }
+
+        function updateStatus(text, type = '') {
+            const statusEl = document.getElementById('status');
+            const statusText = document.getElementById('statusText');
+            if (statusEl && statusText) {
+                const dot = statusEl.querySelector('.dot');
+                if (dot) { dot.className = 'dot'; if (type === 'green') dot.classList.add('green'); else if (type === 'red') dot.classList.add('red'); else if (type === 'orange') dot.classList.add('orange'); }
+                statusText.textContent = text;
+            }
+        }
+
+        // ============ IMAGE HANDLING ============
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            if (file.size > MAX_IMAGE_SIZE) {
+                const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+                alert(`Image is too large (${sizeMB}MB). Please use an image under 3MB.`);
+                this.value = '';
+                return;
+            }
+            
+            if (!file.type.startsWith('image/')) {
+                alert('Please select a valid image file.');
+                this.value = '';
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const base64Data = event.target.result.split(',')[1];
+                uploadedImage = {
+                    data: base64Data,
+                    mimeType: file.type,
+                    name: file.name,
+                    size: file.size
+                };
+                
+                imagePreview.src = event.target.result;
+                imageFileName.textContent = file.name;
+                const sizeKB = (file.size / 1024).toFixed(0);
+                imageFileSize.textContent = `${sizeKB}KB`;
+                imagePreviewContainer.classList.add('has-image');
+                
+                updateStatus(`📷 Image ready: ${file.name} (${sizeKB}KB)`, 'green');
+                document.getElementById('userInput').focus();
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function removeImage() {
+            uploadedImage = null;
+            imagePreview.src = '';
+            imageFileName.textContent = '';
+            imageFileSize.textContent = '';
+            imagePreviewContainer.classList.remove('has-image');
+            document.getElementById('imageInput').value = '';
+            updateStatus('Image removed', '');
+        }
+
+        // ============ MESSAGES ============
+        function addMessage(role, content, image = null) {
+            const msg = { role, content, timestamp: new Date().toISOString() };
+            if (image) {
+                msg.image = image;
+            }
+            messages.push(msg);
+            if (allChats[currentChatId]) {
+                allChats[currentChatId].messages = messages;
+                allChats[currentChatId].updated = new Date().toISOString();
+                if (role === 'user' && allChats[currentChatId].title === 'New Chat') {
+                    const firstMsg = messages.find(m => m.role === 'user');
+                    if (firstMsg) { allChats[currentChatId].title = firstMsg.content.substring(0, 30) + (firstMsg.content.length > 30 ? '...' : ''); }
+                }
+                saveAllChats();
+            }
+            renderMessages();
+        }
+
+        function renderMessages() {
+            if (!chatDiv) return;
+            chatDiv.innerHTML = messages.map((msg) => {
+                if (msg.role === 'system') return '';
+                const cls = msg.role === 'user' ? 'user' : 'assistant';
+                const label = msg.role === 'user' ? 'You' : 'Future';
+                const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+                let imageHtml = '';
+                if (msg.image) {
+                    imageHtml = `<div style="margin-top:8px;max-width:200px;"><img src="data:${msg.image.mimeType};base64,${msg.image.data}" style="max-width:100%;border-radius:8px;max-height:200px;" /></div>`;
+                }
+                return `<div class="message ${cls}"><strong>${label}</strong>${msg.content}${imageHtml}${time ? `<div class="timestamp">${time}</div>` : ''}</div>`;
+            }).join('');
+            scrollToBottom();
+        }
+
+        function showTyping() { typingIndicator.style.display = 'flex'; scrollToBottom(); }
+        function hideTyping() { typingIndicator.style.display = 'none'; }
+
+        function getFullMessageHistory() {
+            const fullMessages = [SYSTEM_PROMPT];
+            messages.forEach(msg => {
+                if (msg.role !== 'system') {
+                    fullMessages.push({ role: msg.role, content: msg.content });
+                }
+            });
+            return fullMessages;
+        }
+
+        // ============ CLEAN TRANSCRIPTION ============
+        function cleanTranscript(text) {
+            const words = text.split(' ');
+            if (words.length < 2) return text;
+            
+            const cleaned = [];
+            let skipNext = false;
+            
+            for (let i = 0; i < words.length; i++) {
+                if (skipNext) {
+                    skipNext = false;
+                    continue;
+                }
+                
+                if (i + 2 < words.length && words[i] === words[i+1] && words[i] === words[i+2]) {
+                    cleaned.push(words[i]);
+                    skipNext = true;
+                    continue;
+                }
+                
+                if (i + 1 < words.length && words[i] === words[i+1]) {
+                    cleaned.push(words[i]);
+                    skipNext = true;
+                    continue;
+                }
+                
+                cleaned.push(words[i]);
+            }
+            
+            return cleaned.join(' ');
+        }
+
+        // ============ SEND MESSAGE WITH GEMINI ============
+        async function sendMessage(shouldSpeak = false) {
+            if (isProcessing) return;
+            if (!API_KEY) {
+                updateStatus('❌ Please enter your API key first!', 'red');
+                document.getElementById('apiSetup').classList.remove('hidden');
+                return;
+            }
+            
+            const input = document.getElementById('userInput');
+            const userText = input.value.trim();
+            if (!userText && !uploadedImage) {
+                updateStatus('Please type a message or upload an image', 'orange');
+                return;
+            }
+            
+            const currentImage = uploadedImage;
+            const imageCopy = currentImage ? { ...currentImage } : null;
+            
+            addMessage('user', userText || '📷 [Image uploaded]', imageCopy);
+            input.value = '';
+            
+            if (uploadedImage) {
+                removeImage();
+            }
+            
+            updateStatus('🤔 Thinking...', 'orange');
+            showTyping();
+            
+            isProcessing = true;
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('voiceBtn').disabled = true;
+            document.getElementById('talkBtn').disabled = true;
+            document.getElementById('imageInput').disabled = true;
+            
+            try {
+                let response;
+                if (imageCopy) {
+                    response = await callGeminiWithImage(userText || 'Describe this image.', imageCopy);
+                } else {
+                    response = await callGemini(userText);
+                }
+                
+                hideTyping();
+                addMessage('assistant', response);
+                hasIntroduced = true;
+                
+                if (shouldSpeak) {
+                    updateStatus('🗣️ Speaking...', 'green');
+                    speakText(response);
+                } else {
+                    updateStatus('Ready', '');
+                }
+            } catch (error) {
+                hideTyping();
+                console.error('Error:', error);
+                updateStatus('❌ Error: ' + error.message, 'red');
+                addMessage('assistant', 'Sorry, I had an error: ' + error.message);
+            } finally {
+                isProcessing = false;
+                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('voiceBtn').disabled = false;
+                document.getElementById('talkBtn').disabled = false;
+                document.getElementById('imageInput').disabled = false;
+            }
+        }
+
+        // ============ GEMINI API - TEXT ONLY ============
+        async function callGemini(userText) {
+            const fullMessages = getFullMessageHistory();
+            
+            // Convert messages to Gemini format
+            const geminiMessages = fullMessages.map(msg => ({
+                role: msg.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: msg.content }]
+            }));
+            
+            const response = await fetch(GEMINI_API_URL + API_KEY, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: geminiMessages,
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 500
+                    }
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                console.error('Gemini Error:', data.error);
+                throw new Error(data.error.message || 'Gemini API error');
+            }
+            
+            if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+                throw new Error('Unexpected response format from Gemini');
+            }
+            
+            return data.candidates[0].content.parts[0].text;
+        }
+
+        // ============ GEMINI API - WITH IMAGE ============
+        async function callGeminiWithImage(userText, imageData) {
+            const fullMessages = getFullMessageHistory();
+            
+            // Build Gemini format with image
+            const geminiMessages = fullMessages.map(msg => ({
+                role: msg.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: msg.content }]
+            }));
+            
+            // Add the image to the last user message
+            const lastMessage = geminiMessages[geminiMessages.length - 1];
+            lastMessage.parts.push({
+                inlineData: {
+                    mimeType: imageData.mimeType,
+                    data: imageData.data
+                }
+            });
+            
+            const response = await fetch(GEMINI_API_URL + API_KEY, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: geminiMessages,
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 500
+                    }
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                console.error('Gemini Error:', data.error);
+                throw new Error(data.error.message || 'Gemini API error');
+            }
+            
+            if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+                throw new Error('Unexpected response format from Gemini');
+            }
+            
+            return data.candidates[0].content.parts[0].text;
+        }
+
+        // ============ OVERLAY ============
+        function openOverlay() {
+            if (isOverlayOpen) return;
+            if (!API_KEY) {
+                updateStatus('❌ Please enter your API key first!', 'red');
+                document.getElementById('apiSetup').classList.remove('hidden');
+                return;
+            }
+            isOverlayOpen = true;
+            overlay.classList.add('open');
+            overlayFinalText = '';
+            overlayConversationEl.innerHTML = '';
+            placeholderText.style.display = 'inline';
+            overlayStatus.textContent = '🎤 Press "Speak" to start talking';
+            document.getElementById('talkBtn').classList.add('active');
+            updateStatus('🗣️ Talk mode open', 'green');
+        }
+
+        function closeOverlay() {
+            isOverlayOpen = false;
+            overlay.classList.remove('open');
+            if (isListening) {
+                if (recognition) { recognition.stop(); recognition = null; }
+                isListening = false;
+            }
+            if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+            overlaySpeakBtn.classList.remove('listening');
+            overlaySpeakBtn.innerHTML = '<i class="fas fa-microphone"></i> Speak';
+            document.getElementById('talkBtn').classList.remove('active');
+            updateStatus('Ready', '');
+        }
+
+        function addOverlayMessage(role, text) {
+            const label = role === 'user' ? 'You' : 'Future';
+            const cls = role === 'user' ? 'user-text' : 'ai-text';
+            placeholderText.style.display = 'none';
+            overlayConversationEl.innerHTML += `<span class="label">${label}:</span><span class="${cls}">${text}</span><br>`;
+            overlayTextBox.scrollTop = overlayTextBox.scrollHeight;
+        }
+
+        function updateOverlayUserText(text) {
+            placeholderText.style.display = 'none';
+            const lines = overlayConversationEl.innerHTML.split('<br>');
+            const lastLine = lines[lines.length - 1];
+            if (lastLine && lastLine.includes('You:')) {
+                lines[lines.length - 1] = `<span class="label">You:</span><span class="user-text">${text}</span>`;
+                overlayConversationEl.innerHTML = lines.join('<br>');
+            } else {
+                overlayConversationEl.innerHTML += `<span class="label">You:</span><span class="user-text">${text}</span><br>`;
+            }
+            overlayTextBox.scrollTop = overlayTextBox.scrollHeight;
+        }
+
+        // ============ OVERLAY SPEAK ============
+        function toggleOverlaySpeaking() {
+            if (!API_KEY) {
+                updateStatus('❌ Please enter your API key first!', 'red');
+                document.getElementById('apiSetup').classList.remove('hidden');
+                return;
+            }
+            
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                updateStatus('❌ Voice not supported', 'red');
+                alert('Voice input requires Chrome or Safari.');
+                return;
+            }
+            
+            if (isListening) {
+                if (recognition) { recognition.stop(); recognition = null; }
+                isListening = false;
+                if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+                overlaySpeakBtn.classList.remove('listening');
+                overlaySpeakBtn.innerHTML = '<i class="fas fa-microphone"></i> Speak';
+                overlayStatus.textContent = '⏸️ Paused - Press Speak to continue';
+                return;
+            }
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+            recognition.continuous = true;
+            recognition.maxAlternatives = 1;
+            
+            isListening = true;
+            overlaySpeakBtn.classList.add('listening');
+            overlaySpeakBtn.innerHTML = '<i class="fas fa-stop-circle"></i> Stop';
+            overlayStatus.textContent = '🎤 Listening... Speak clearly';
+            overlayFinalText = '';
+            let lastTranscript = '';
+            
+            recognition.onresult = (event) => {
+                let finalTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        const transcript = event.results[i][0].transcript.trim();
+                        if (transcript !== lastTranscript && transcript.length > 1) {
+                            finalTranscript += ' ' + transcript;
+                            lastTranscript = transcript;
+                        }
+                    }
+                }
+                
+                if (finalTranscript.trim()) {
+                    const cleaned = cleanTranscript(finalTranscript.trim());
+                    if (cleaned.length > 0) {
+                        overlayFinalText = cleaned;
+                        updateOverlayUserText(overlayFinalText);
+                        document.getElementById('userInput').value = overlayFinalText;
+                        
+                        if (silenceTimer) {
+                            clearTimeout(silenceTimer);
+                            silenceTimer = null;
+                        }
+                        
+                        silenceTimer = setTimeout(() => {
+                            if (overlayFinalText.trim()) {
+                                silenceTimer = null;
+                                sendOverlayMessage(overlayFinalText);
+                            }
+                        }, SILENCE_DELAY);
+                    }
+                }
+            };
+            
+            recognition.onend = () => {
+                isListening = false;
+                overlaySpeakBtn.classList.remove('listening');
+                overlaySpeakBtn.innerHTML = '<i class="fas fa-microphone"></i> Speak';
+                
+                const text = document.getElementById('userInput').value.trim();
+                if (text && !silenceTimer) {
+                    overlayStatus.textContent = '🤔 Processing...';
+                    sendOverlayMessage(text);
+                } else if (!text) {
+                    overlayStatus.textContent = '⏳ No speech detected - Press Speak to try again';
+                }
+                recognition = null;
+            };
+            
+            recognition.onerror = (event) => {
+                isListening = false;
+                overlaySpeakBtn.classList.remove('listening');
+                overlaySpeakBtn.innerHTML = '<i class="fas fa-microphone"></i> Speak';
+                if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+                
+                if (event.error === 'not-allowed') {
+                    overlayStatus.textContent = '❌ Microphone access denied';
+                    alert('Please allow microphone access.');
+                } else if (event.error === 'no-speech') {
+                    overlayStatus.textContent = '⏳ No speech detected - Press Speak to try again';
+                } else {
+                    overlayStatus.textContent = '❌ Error: ' + event.error;
+                }
+                recognition = null;
+            };
+            
+            recognition.start();
+        }
+
+        // ============ SEND FROM OVERLAY ============
+        async function sendOverlayMessage(userText) {
+            if (isProcessing) return;
+            if (!userText || !userText.trim()) return;
+            
+            const cleanText = userText.trim();
+            
+            addMessage('user', cleanText);
+            document.getElementById('userInput').value = '';
+            overlayStatus.textContent = '🤔 Future is thinking...';
+            showTyping();
+            
+            isProcessing = true;
+            
+            try {
+                const response = await callGemini(cleanText);
+                hideTyping();
+                addMessage('assistant', response);
+                hasIntroduced = true;
+                
+                addOverlayMessage('assistant', response);
+                overlayStatus.textContent = '🗣️ Speaking...';
+                
+                speakText(response);
+                
+            } catch (error) {
+                hideTyping();
+                overlayStatus.textContent = '❌ Error: ' + error.message;
+                addMessage('assistant', 'Sorry, I had an error. Please try again.');
+            } finally {
+                isProcessing = false;
+                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('voiceBtn').disabled = false;
+                document.getElementById('talkBtn').disabled = false;
+                overlayFinalText = '';
+            }
+        }
+
+        // ============ VOICE: TEXT TO SPEECH ============
+        function speakText(text) {
+            if (!('speechSynthesis' in window)) {
+                updateStatus('❌ Speech not supported', 'red');
+                return;
+            }
+            
+            try {
+                if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); }
+            } catch(e) {}
+            
+            const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+            let currentIndex = 0;
+            
+            function speakNext() {
+                if (currentIndex >= sentences.length) {
+                    updateStatus('Ready', '');
+                    if (isOverlayOpen) {
+                        overlayStatus.textContent = '🎤 Press Speak to continue talking';
+                    }
+                    return;
+                }
+                
+                const sentence = sentences[currentIndex].trim();
+                if (!sentence) { currentIndex++; speakNext(); return; }
+                
+                const utterance = new SpeechSynthesisUtterance(sentence);
+                utterance.rate = 0.9;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+                utterance.lang = 'en-US';
+                
+                try {
+                    const voices = window.speechSynthesis.getVoices();
+                    if (voices && voices.length > 0) {
+                        const preferredVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Female') || v.name.includes('Zira') || v.name.includes('Samantha'))) || voices[0];
+                        utterance.voice = preferredVoice;
+                    }
+                } catch(e) {}
+                
+                utterance.onend = () => { currentIndex++; setTimeout(speakNext, 300); };
+                utterance.onerror = () => { currentIndex++; setTimeout(speakNext, 300); };
+                
+                try { window.speechSynthesis.speak(utterance); } catch(e) { currentIndex++; setTimeout(speakNext, 300); }
+            }
+            
+            updateStatus('🗣️ Speaking...', 'green');
+            if (isOverlayOpen) {
+                overlayStatus.textContent = '🗣️ Speaking...';
+            }
+            speakNext();
+        }
+
+        // ============ VOICE BUTTON ============
+        function startVoice(shouldSpeak = false) {
+            if (!API_KEY) {
+                updateStatus('❌ Please enter your API key first!', 'red');
+                document.getElementById('apiSetup').classList.remove('hidden');
+                return;
+            }
+            
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                updateStatus('❌ Voice not supported', 'red');
+                alert('Voice input requires Chrome or Safari.');
+                return;
+            }
+            
+            if (isListening) {
+                if (recognition) { recognition.stop(); recognition = null; }
+                isListening = false;
+                document.getElementById('voiceBtn').classList.remove('active');
+                updateStatus('Ready', '');
+                return;
+            }
+            
+            document.getElementById('voiceBtn').classList.add('active');
+            updateStatus('🎤 Speak mode - Speak now', 'orange');
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+            recognition.continuous = false;
+            
+            isListening = true;
+            let finalTranscript = '';
+            let voiceSilenceTimer = null;
+            
+            recognition.onresult = (event) => {
+                let transcript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        transcript += event.results[i][0].transcript.trim();
+                    }
+                }
+                if (transcript) {
+                    finalTranscript = transcript;
+                    document.getElementById('userInput').value = finalTranscript;
+                    updateStatus('✅ Heard: "' + finalTranscript + '"', 'green');
+                    
+                    if (voiceSilenceTimer) { clearTimeout(voiceSilenceTimer); }
+                    voiceSilenceTimer = setTimeout(() => {
+                        const text = document.getElementById('userInput').value.trim();
+                        if (text) {
+                            if (recognition) { recognition.stop(); recognition = null; }
+                            isListening = false;
+                            document.getElementById('voiceBtn').classList.remove('active');
+                            updateStatus('✅ Sending...', 'green');
+                            setTimeout(() => { sendMessage(false); }, 300);
+                        }
+                    }, SILENCE_DELAY);
+                }
+            };
+            
+            recognition.onend = () => {
+                isListening = false;
+                document.getElementById('voiceBtn').classList.remove('active');
+                if (voiceSilenceTimer) { clearTimeout(voiceSilenceTimer); }
+                const text = document.getElementById('userInput').value.trim();
+                if (text) {
+                    updateStatus('✅ Sending...', 'green');
+                    setTimeout(() => { sendMessage(false); }, 500);
+                } else {
+                    updateStatus('Ready', '');
+                }
+                recognition = null;
+            };
+            
+            recognition.onerror = (event) => {
+                isListening = false;
+                document.getElementById('voiceBtn').classList.remove('active');
+                if (voiceSilenceTimer) { clearTimeout(voiceSilenceTimer); }
+                if (event.error === 'not-allowed') {
+                    updateStatus('❌ Microphone access denied', 'red');
+                    alert('Please allow microphone access.');
+                } else if (event.error === 'no-speech') {
+                    updateStatus('⏳ No speech detected', 'orange');
+                } else {
+                    updateStatus('❌ Error: ' + event.error, 'red');
+                }
+                recognition = null;
+            };
+            
+            recognition.start();
+        }
+
+        // ============ CLEAR CHAT ============
+        function clearChat() {
+            if (confirm('Clear all messages in this chat?')) {
+                if (window.speechSynthesis && window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); }
+                if (allChats[currentChatId]) {
+                    allChats[currentChatId].messages = [];
+                    allChats[currentChatId].title = 'New Chat';
+                    messages = [];
+                    hasIntroduced = false;
+                    saveAllChats();
+                    renderMessages();
+                    renderChatList();
+                }
+                removeImage();
+                updateStatus('Chat cleared', '');
+            }
+        }
+
+        // ============ PRELOAD VOICES ============
+        function preloadVoices() {
+            if ('speechSynthesis' in window) {
+                let voices = window.speechSynthesis.getVoices();
+                if (voices.length === 0) {
+                    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+                }
+            }
+        }
+
+        // ============ INIT ============
+        document.addEventListener('DOMContentLoaded', function() {
+            const input = document.getElementById('userInput');
+            if (input) {
+                input.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(false); });
+                setTimeout(() => input.focus(), 100);
+            }
+            preloadVoices();
+            loadAllChats();
+            if (messages.length === 0 && API_KEY) {
+                addMessage('assistant', '👋 Hello! I\'m Future. Your AI guide is ready!');
+                hasIntroduced = true;
+            }
+            if (API_KEY) { updateStatus('Ready', ''); } else { updateStatus('🔑 Please enter your Gemini API key', 'orange'); }
+        });
+    
