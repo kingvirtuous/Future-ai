@@ -1,13 +1,11 @@
 
-        // ============ CONFIG ============
-        // GEMINI API CONFIGURATION
         let API_KEY = localStorage.getItem('geminiApiKey') || '';
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=";
         const SILENCE_DELAY = 2000;
         const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB max
         let uploadedImage = null;
 
-        // ============ SYSTEM PROMPT ============
+        
         const SYSTEM_PROMPT = {
             role: 'system',
             content: `You are a helpful AI assistant. Your name is Future.
@@ -21,7 +19,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             6. When analyzing images, provide the final list directly WITHOUT showing step-by-step reasoning.`
         };
 
-        // ============ STATE ============
+        //  STATE
         let currentChatId = null;
         let allChats = {};
         let messages = [];
@@ -33,7 +31,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
         let silenceTimer = null;
         let hasIntroduced = false;
 
-        // ============ DOM REFS ============
+        // DOM REFS
         const chatContainer = document.getElementById('chatContainer');
         const chatDiv = document.getElementById('chat');
         const typingIndicator = document.getElementById('typingIndicator');
@@ -52,7 +50,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
         function toggleSidebar() { document.getElementById('chatSidebar').classList.toggle('open'); }
         function closeSidebar() { document.getElementById('chatSidebar').classList.remove('open'); }
 
-        // ============ CHAT MANAGEMENT ============
+        
         function loadAllChats() {
             const saved = localStorage.getItem('futureAllChats');
             if (saved) { try { allChats = JSON.parse(saved); } catch(e) { allChats = {}; } }
@@ -127,7 +125,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
 
         function scrollToBottom() { setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight; }, 50); }
 
-        // ============ API KEY FUNCTIONS ============
+        
         function setAPIKey() {
             const input = document.getElementById('apiKeyInput');
             const key = input.value.trim();
@@ -168,7 +166,6 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             }
         }
 
-        // ============ IMAGE HANDLING ============
         document.getElementById('imageInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -218,7 +215,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             updateStatus('Image removed', '');
         }
 
-        // ============ MESSAGES ============
+        
         function addMessage(role, content, image = null) {
             const msg = { role, content, timestamp: new Date().toISOString() };
             if (image) {
@@ -266,7 +263,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             return fullMessages;
         }
 
-        // ============ CLEAN TRANSCRIPTION ============
+      
         function cleanTranscript(text) {
             const words = text.split(' ');
             if (words.length < 2) return text;
@@ -298,7 +295,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             return cleaned.join(' ');
         }
 
-        // ============ SEND MESSAGE WITH GEMINI ============
+        
         async function sendMessage(shouldSpeak = false) {
             if (isProcessing) return;
             if (!API_KEY) {
@@ -364,8 +361,6 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
                 document.getElementById('imageInput').disabled = false;
             }
         }
-
-        // ============ GEMINI API - TEXT ONLY ============
         async function callGemini(userText) {
             const fullMessages = getFullMessageHistory();
             
@@ -401,17 +396,17 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             return data.candidates[0].content.parts[0].text;
         }
 
-        // ============ GEMINI API - WITH IMAGE ============
+        
         async function callGeminiWithImage(userText, imageData) {
             const fullMessages = getFullMessageHistory();
             
-            // Build Gemini format with image
+    
             const geminiMessages = fullMessages.map(msg => ({
                 role: msg.role === 'assistant' ? 'model' : 'user',
                 parts: [{ text: msg.content }]
             }));
             
-            // Add the image to the last user message
+            
             const lastMessage = geminiMessages[geminiMessages.length - 1];
             lastMessage.parts.push({
                 inlineData: {
@@ -446,7 +441,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             return data.candidates[0].content.parts[0].text;
         }
 
-        // ============ OVERLAY ============
+        
         function openOverlay() {
             if (isOverlayOpen) return;
             if (!API_KEY) {
@@ -499,7 +494,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             overlayTextBox.scrollTop = overlayTextBox.scrollHeight;
         }
 
-        // ============ OVERLAY SPEAK ============
+        
         function toggleOverlaySpeaking() {
             if (!API_KEY) {
                 updateStatus('❌ Please enter your API key first!', 'red');
@@ -607,7 +602,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             recognition.start();
         }
 
-        // ============ SEND FROM OVERLAY ============
+        
         async function sendOverlayMessage(userText) {
             if (isProcessing) return;
             if (!userText || !userText.trim()) return;
@@ -645,7 +640,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             }
         }
 
-        // ============ VOICE: TEXT TO SPEECH ============
+        
         function speakText(text) {
             if (!('speechSynthesis' in window)) {
                 updateStatus('❌ Speech not supported', 'red');
@@ -698,7 +693,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             speakNext();
         }
 
-        // ============ VOICE BUTTON ============
+        
         function startVoice(shouldSpeak = false) {
             if (!API_KEY) {
                 updateStatus('❌ Please enter your API key first!', 'red');
@@ -721,7 +716,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             }
             
             document.getElementById('voiceBtn').classList.add('active');
-            updateStatus('🎤 Speak mode - Speak now', 'orange');
+            updateStatus(' Speak mode - Speak now', 'orange');
             
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -791,7 +786,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             recognition.start();
         }
 
-        // ============ CLEAR CHAT ============
+        
         function clearChat() {
             if (confirm('Clear all messages in this chat?')) {
                 if (window.speechSynthesis && window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); }
@@ -809,7 +804,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             }
         }
 
-        // ============ PRELOAD VOICES ============
+        
         function preloadVoices() {
             if ('speechSynthesis' in window) {
                 let voices = window.speechSynthesis.getVoices();
@@ -819,7 +814,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
             }
         }
 
-        // ============ INIT ============
+      
         document.addEventListener('DOMContentLoaded', function() {
             const input = document.getElementById('userInput');
             if (input) {

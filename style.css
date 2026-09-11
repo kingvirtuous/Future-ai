@@ -16,7 +16,7 @@
             background: #0f0a08;
         }
         
-        /* ============ SIDEBAR ============ */
+      
         .chat-sidebar {
             position: fixed;
             left: -300px;
@@ -107,7 +107,7 @@
         }
         .new-chat-btn:hover { background: #D48C6B; color: #1a1410; }
         
-        /* ============ OVERLAY ============ */
+        
         .overlay {
             position: fixed;
             top: 0;
@@ -255,7 +255,7 @@
         .overlay-btn.speak:hover { background: #c47a5a; }
         .overlay-btn.speak.listening { background: #ff4444; color: #fff; animation: pulse 0.8s infinite; }
         
-        /* ============ API SETUP - TOP ============ */
+        
         .api-setup {
             padding: 16px 20px;
             background: #1a1410;
@@ -340,7 +340,7 @@
             color: #ff6b2a;
         }
         
-        /* ============ CHAT - FULL SPACE ============ */
+        
         .chat-container {
             flex: 1;
             overflow-y: auto;
@@ -395,7 +395,7 @@
         .typing .dot:nth-child(3) { animation-delay: 0.4s; }
         @keyframes typingDot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.3; } 30% { transform: translateY(-6px); opacity: 1; } }
         
-        /* ============ IMAGE PREVIEW ============ */
+        
         .image-preview-container {
             display: none;
             padding: 8px 16px 4px 16px;
@@ -452,7 +452,7 @@
             color: #ff6666;
         }
         
-        /* ============ BOTTOM CONTROLS BAR ============ */
+        
         .bottom-bar {
             flex-shrink: 0;
             background: #1a1410;
@@ -462,7 +462,7 @@
             z-index: 10;
         }
         
-        /* Status bar */
+        
         .status {
             text-align: center;
             color: #6a5a4e;
@@ -645,7 +645,7 @@
         
         @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
         
-        /* ============ RESPONSIVE ============ */
+        
         @media (max-width: 480px) {
             .input-row { padding: 8px 10px; gap: 6px; }
             .input-row .menu-btn { width: 36px; height: 36px; font-size: 14px; }
